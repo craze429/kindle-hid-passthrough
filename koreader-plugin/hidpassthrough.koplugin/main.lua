@@ -1824,6 +1824,34 @@ function HIDPassthrough:_doToggle(touchmenu_instance)
     end
 end
 
+-- A daemon too old to report the field always pages, so that reads as on.
+function HIDPassthrough:isActiveReconnect()
+    local state, body = self:getState()
+    if state ~= "on" then return false end
+    return not body:find('"active_reconnect"%s*:%s*false')
+end
+
+function HIDPassthrough:_doToggleActiveReconnect(touchmenu_instance)
+    local want = not self:isActiveReconnect()
+    local data, err = self:_httpGetJson("/reconnect?enable=" .. (want and "1" or "0"))
+    local msg
+    if not data or not data.ok then
+        msg = T(_("Could not change automatic reconnect: %1"),
+            tostring(err or (data and data.error)))
+    elseif data.saved == false then
+        msg = _("Automatic reconnect changed, but could not be saved for the next start.")
+    else
+        msg = data.enabled and _("Automatic reconnect on.") or _("Automatic reconnect off.")
+    end
+    UIManager:show(InfoMessage:new{
+        text = msg,
+        timeout = (data and data.ok and data.saved ~= false) and 2 or 4,
+    })
+    if touchmenu_instance then
+        touchmenu_instance:updateItems()
+    end
+end
+
 function HIDPassthrough:addToMainMenu(menu_items)
     menu_items.hid_passthrough = {
         text = _("BT Manager - HID Passthrough"),
@@ -1857,6 +1885,18 @@ function HIDPassthrough:addToMainMenu(menu_items)
                 enabled_func = function() return self:isRunning() end,
                 keep_menu_open = true,
                 callback = function() self:showPairedDevices() end,
+            },
+            {
+                text = _("Reconnect automatically"),
+                help_text = _([[Keep calling paired Classic devices that are not connected.
+
+Off saves battery. The Kindle then calls them once when Bluetooth starts or the Kindle wakes, and otherwise waits for them. A keyboard reconnects on its own when you press a key; any other device comes back through Connect in Paired devices.]]),
+                enabled_func = function() return self:isRunning() end,
+                checked_func = function() return self:isActiveReconnect() end,
+                check_callback_updates_menu = true,
+                callback = function(touchmenu_instance)
+                    self:_doToggleActiveReconnect(touchmenu_instance)
+                end,
             },
             {
                 text = _("Key mappings"),

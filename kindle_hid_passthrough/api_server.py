@@ -96,6 +96,8 @@ class RequestHandler(BaseHTTPRequestHandler):
                 self._handle_clear_cache()
             case '/autostart':
                 self._handle_autostart(param('enable'))
+            case '/reconnect':
+                self._handle_reconnect(param('enable'))
             case '/scan':
                 self._handle_scan()
             case '/scan-status':
@@ -127,7 +129,18 @@ class RequestHandler(BaseHTTPRequestHandler):
         status["ok"] = True
         status["version"] = get_version()
         status["autostart"] = os.path.exists(UPSTART_CONF)
+        status["active_reconnect"] = config.active_reconnect
         self._send_json(status)
+
+    def _handle_reconnect(self, enable):
+        """Query or toggle active paging of Classic devices without a link."""
+        if enable is None:
+            self._send_json({"ok": True, "enabled": config.active_reconnect})
+            return
+
+        want = enable not in ('0', 'false', 'off')
+        saved = config.set_active_reconnect(want)
+        self._send_json({"ok": True, "enabled": config.active_reconnect, "saved": saved})
 
     def _handle_autostart(self, enable):
         if enable is None:

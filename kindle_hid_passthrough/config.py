@@ -137,6 +137,7 @@ class Config:
         self._determine_base_path()
 
         config_file = os.path.join(self.base_path, 'config.ini')
+        self.config_file = config_file
         self._parser = configparser.ConfigParser()
 
         if os.path.exists(config_file):
@@ -157,6 +158,10 @@ class Config:
         self.hci_reset_timeout = self._getint('connection', 'hci_reset_timeout', 10)
         self.connect_timeout = self._getint('connection', 'connect_timeout', 30)
         self.transport_timeout = self._getint('connection', 'transport_timeout', 30)
+        # Page configured Classic devices that have no link. Off leaves the
+        # reconnect to the device: page scan stays on, and keyboards page the
+        # host themselves on a keypress, so this mostly spends battery on them.
+        self.active_reconnect = self._getboolean('connection', 'active_reconnect', True)
 
         # Bluetooth hardware setup
         self.bt_module_patterns = self._get_list('bluetooth', 'module_patterns', None)
@@ -456,12 +461,74 @@ class Config:
         Truncating in place would lose every paired device if power went at
         the wrong moment, and lets a concurrent reader cache a partial file.
         """
-        tmp = self.devices_config_file + '.tmp'
+        self._write_atomically(self.devices_config_file, lines)
+
+    @staticmethod
+    def _write_atomically(path, lines):
+        tmp = path + '.tmp'
         with open(tmp, 'w') as f:
             f.writelines(lines)
             f.flush()
             os.fsync(f.fileno())
-        os.replace(tmp, self.devices_config_file)
+        os.replace(tmp, path)
+
+    def set_active_reconnect(self, enabled: bool) -> bool:
+        """Turn active paging on or off now and remember it in config.ini."""
+        self.active_reconnect = bool(enabled)
+        try:
+            self._write_ini_option('connection', 'active_reconnect',
+                                   'true' if enabled else 'false')
+            return True
+        except Exception as e:
+            logging.getLogger(__name__).error(
+                f"Failed to save active_reconnect: {e}")
+            return False
+
+    def _write_ini_option(self, section, key, value):
+        """Set one key in config.ini in place.
+
+        configparser.write() would drop every comment in the file, and those
+        comments are the only documentation most users see.
+        """
+        try:
+            with open(self.config_file, 'r') as f:
+                lines = f.readlines()
+        except FileNotFoundError:
+            lines = []
+        if lines and not lines[-1].endswith('\n'):
+            lines[-1] += '\n'
+
+        entry = f"{key} = {value}\n"
+        out = []
+        current = None
+        done = False
+        for line in lines:
+            stripped = line.strip()
+            if stripped.startswith('[') and stripped.endswith(']'):
+                if current == section and not done:
+                    # Last key of the section, ahead of its trailing blank lines.
+                    pos = len(out)
+                    while pos and not out[pos - 1].strip():
+                        pos -= 1
+                    out.insert(pos, entry)
+                    done = True
+                current = stripped[1:-1].strip()
+            elif (current == section and not done and '=' in stripped
+                    and not stripped.startswith(('#', ';'))
+                    and stripped.split('=', 1)[0].strip().lower() == key):
+                out.append(entry)
+                done = True
+                continue
+            out.append(line)
+
+        if not done:
+            if current != section:
+                if out and out[-1].strip():
+                    out.append('\n')
+                out.append(f"[{section}]\n")
+            out.append(entry)
+
+        self._write_atomically(self.config_file, out)
 
     def get_all_devices(self) -> list:
         """Load all devices from devices.conf.

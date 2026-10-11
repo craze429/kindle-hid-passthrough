@@ -351,7 +351,19 @@ class ClassicMixin:
         await asyncio.sleep(self.ACTIVE_DELAY)
 
         attempt = 0
+        idle_logged = False
         while True:
+            # Read every pass, so the API toggle applies without a restart.
+            # Off still pages once per host start: Connect in the menu and a
+            # wake from suspend both restart the host and expect one try.
+            if attempt and not config.active_reconnect:
+                if not idle_logged:
+                    log.info("[Classic] Active reconnect off; waiting for devices to page us")
+                    idle_logged = True
+                await asyncio.sleep(self.ACTIVE_RETRY_INTERVAL)
+                continue
+            idle_logged = False
+
             attempt += 1
             addresses = [d.address for d in self.classic_devices if d.address != '*']
             for addr in addresses:

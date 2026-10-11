@@ -526,6 +526,8 @@ class HIDHost(ClassicMixin, BLEMixin):
         Once a device has connected, an empty session set is a device that
         went to sleep, not a broken transport: the handlers keep initiating
         on the open radio, so rebuilding would only make us deaf for a while.
+        With active reconnect off and no BLE device to initiate to, nothing
+        connecting is just devices left asleep, so the same holds.
         """
         had_session = False
         while True:
@@ -541,6 +543,8 @@ class HIDHost(ClassicMixin, BLEMixin):
                     self._sessions_changed.wait(),
                     timeout=self.FIRST_SESSION_TIMEOUT)
             except asyncio.TimeoutError:
+                if not config.active_reconnect and not self.ble_devices:
+                    continue
                 log.warning("Connection timeout - no device connected")
                 raise InvalidStateError("No device connected within timeout")
 
